@@ -1,0 +1,47 @@
+# Full production stack for Raspberry Pi (64-bit OS).
+#   cp .env.prod.example .env   # then fill in secrets
+#   docker compose -f docker-compose.prod.yml up -d --build
+# Open http://<pi-ip>:${WEB_PORT:-8080}
+
+services:
+  db:
+    image: postgres:16
+    container_name: algobot-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-algobot}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-algobot}
+      POSTGRES_DB: ${POSTGRES_DB:-algobot}
+    volumes:
+      - pgdata_prod:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-algobot}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  backend:
+    build: ./backend
+    container_name: algobot-backend
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      # Point the app at the db service (overrides anything in .env).
+      DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER:-algobot}:${POSTGRES_PASSWORD:-algobot}@db:5432/${POSTGRES_DB:-algobot}
+    depends_on:
+      db:
+        condition: service_healthy
+    expose:
+      - "8000"   # internal only — reached via the web/nginx service
+
+  web:
+    build: ./frontend
+    container_name: algobot-web
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      - "${WEB_PORT:-8080}:80"
+
+volumes:
+  pgdata_prod:

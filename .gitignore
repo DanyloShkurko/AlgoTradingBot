@@ -1,0 +1,20 @@
+# Secrets
+backend/.credentials.json
+backend/.env
+.env
+
+# Local runtime state
+backend/.strategy.json
+
+# Python
+backend/.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Node
+frontend/node_modules/
+frontend/dist/
+
+# OS
+.DS_Store

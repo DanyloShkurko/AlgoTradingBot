@@ -1,0 +1,34 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npx tsc *)",
+      "Bash(echo \"--- tsc exit: $? ---\")",
+      "Bash(pkill -f \"vite\")",
+      "Bash(lsof -ti:5173)",
+      "Bash(xargs kill -9)",
+      "mcp__Claude_Preview__preview_start",
+      "Bash(curl -s -o /dev/null -w \"frontend HTTP %{http_code}\\\\n\" http://localhost:5173/)",
+      "Bash(curl -s -X PUT localhost:8000/api/settings -H 'Content-Type: application/json' -d '{\"api_key\":\"dummy_key_1234567890\",\"api_secret\":\"dummy_secret_abcdef\",\"testnet\":true}')",
+      "Bash(curl -s localhost:8000/api/settings)",
+      "Bash(curl -s -X POST localhost:8000/api/settings/test)",
+      "Bash(curl -s -X DELETE localhost:8000/api/settings)",
+      "Bash(tail -30 /tmp/algobot_backend.log | grep -v \"NotOpenSSL\\\\|warnings.warn\")",
+      "Bash(.venv/bin/uvicorn app.main:app --port 8000 --log-level warning)",
+      "Bash(curl -s -w \"\\\\n[HTTP %{http_code}]\\\\n\" -X POST localhost:8000/api/strategy/start)",
+      "Bash(curl -s localhost:8000/api/strategy/status)",
+      "Bash(curl -s -w \"\\\\n[HTTP %{http_code}]\\\\n\" -X POST localhost:8000/api/strategy/stop)",
+      "Bash(curl -s localhost:8000/api/strategy)",
+      "Bash(python3 -c \"import sys,json; print\\('enabled =', json.load\\(sys.stdin\\)['enabled']\\)\")",
+      "Bash(python3 -c \"import sys,json; print\\(json.load\\(sys.stdin\\)['enabled']\\)\")",
+      "Bash(curl -s localhost:8000/api/orders)",
+      "Bash(npm run *)",
+      "Bash(.venv/bin/python -m pytest tests/ -q)",
+      "Bash(.venv/bin/python -c \"from app.main import app; print\\('imports OK'\\)\")",
+      "Bash(python3 -m json.tool)",
+      "Bash(pkill -f \"uvicorn app.main\")",
+      "Bash(.venv/bin/python -c \"from app.main import app; print\\('app imports OK'\\); print\\('routes:'\\); [print\\(' ', sorted\\(m\\)[0] if m else '?', r.path\\) for r in app.routes if getattr\\(r,'path',''\\).startswith\\('/api'\\) for m in [list\\(getattr\\(r,'methods',[]\\) or []\\)]]\")",
+      "Bash(.venv/bin/python -c \"from app.main import app; from app.strategy.bot_runner import BotRunner; from binance import ThreadedWebsocketManager; print\\('imports OK, ThreadedWebsocketManager available'\\)\")",
+      "Bash(docker buildx *)"
+    ]
+  }
+}
