@@ -225,6 +225,14 @@ def _plan_take_profit(
         # Price is already past every target → close the remainder at the top.
         ahead = [prices[-1]]
 
+    # A tiny position can't be split into N orders that each clear the
+    # exchange minimum notional — then none get placed and the position is
+    # stuck. Cap the level count to how many min-notional orders it affords,
+    # taking the nearest levels (they fill soonest).
+    if state.min_order_notional > 0 and state.mark_price > 0:
+        affordable = int((base_qty * state.mark_price) // state.min_order_notional)
+        ahead = ahead[: max(1, min(len(ahead), affordable))]
+
     n = len(ahead)
     remaining = base_qty
     for k, price in enumerate(ahead, start=1):

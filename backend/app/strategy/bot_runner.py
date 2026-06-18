@@ -213,6 +213,7 @@ class BotRunner:
             position_size=pos.size if pos else 0.0,
             avg_entry_price=pos.entry_price if pos else 0.0,
             liquidation_price=pos.liquidation_price if pos else 0.0,
+            min_order_notional=svc.symbol_filters(symbol).min_notional,
         )
 
         current = (round(state.position_size, 8), round(state.avg_entry_price, 8))

@@ -15,6 +15,7 @@ class MarketState:
     position_size: float = 0.0     # base asset held (0 = flat)
     avg_entry_price: float = 0.0    # average entry / break-even ("point zero")
     liquidation_price: float = 0.0  # exchange-reported liquidation (0 = unknown)
+    min_order_notional: float = 0.0  # exchange min notional per order (0 = unknown)
 
     @property
     def position_notional(self) -> float:

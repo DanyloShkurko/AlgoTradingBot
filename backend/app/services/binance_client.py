@@ -151,14 +151,16 @@ class BinanceService:
         return float(self._client_().futures_mark_price(symbol=symbol)["markPrice"])
 
     def get_realized_income(self, symbol: str, start_ms: Optional[int]) -> float:
-        """Net realized income (PnL + commissions + funding) for a symbol."""
+        """Net realized PnL for a symbol (realized profit minus commissions),
+        from trade history. More reliable than the income endpoint on testnet.
+        """
         params: dict[str, Any] = {"symbol": symbol, "limit": 1000}
         if start_ms:
             params["startTime"] = start_ms
-        records = self._client_().futures_income(**params)
-        relevant = {"REALIZED_PNL", "COMMISSION", "FUNDING_FEE"}
+        trades = self._client_().futures_account_trades(**params)
         return sum(
-            float(r["income"]) for r in records if r.get("incomeType") in relevant
+            float(t.get("realizedPnl", 0)) - float(t.get("commission", 0))
+            for t in trades
         )
 
     # -- trading ----------------------------------------------------------

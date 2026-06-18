@@ -156,6 +156,18 @@ def test_take_profit_skips_levels_already_passed():
     assert round(sum(o.quantity for o in tp), 6) == 0.024  # whole remainder
 
 
+def test_take_profit_caps_levels_to_min_notional():
+    # Position ~$46; min notional $20 → can't make 3 orders each >= $20, so
+    # the ladder is capped to 2 (otherwise none would be placed).
+    state = MarketState(balance=1000, mark_price=1773, position_size=0.026,
+                        avg_entry_price=1720, liquidation_price=1555,
+                        min_order_notional=20)
+    tp = by_role(plan(state, cfg()), "take_profit")
+    assert len(tp) == 2
+    assert all(o.quantity * o.price >= 20 for o in tp)  # each clears the minimum
+    assert round(sum(o.quantity for o in tp), 6) == 0.026  # whole position
+
+
 def test_take_profit_closes_all_when_past_every_target():
     # Mark above the top target → close the full remainder at the top level.
     state = MarketState(balance=1000, mark_price=40000, position_size=0.024,
