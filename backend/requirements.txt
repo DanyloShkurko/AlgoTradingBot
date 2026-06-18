@@ -4,6 +4,9 @@ python-dotenv==1.0.0
 pydantic==2.5.0
 pydantic-settings==2.1.0
 python-binance==1.0.19
+# python-binance 1.0.19 uses the legacy websockets API (fail_connection etc.);
+# websockets >=14 removed it, so pin to a compatible version.
+websockets==12.0
 httpx==0.25.2
 sqlalchemy==2.0.25
 psycopg2-binary==2.9.9
