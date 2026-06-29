@@ -57,6 +57,7 @@ export interface BotConfig {
   dca_add_pct: number
   take_profit_pct: number
   take_profit_close_pct: number
+  tp_width_pct: number
   max_dca_orders: number
 }
 

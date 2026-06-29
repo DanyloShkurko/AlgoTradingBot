@@ -14,6 +14,7 @@ class BotConfigBase(BaseModel):
     dca_add_pct: float = Field(default=20.0, gt=0, le=200)
     take_profit_pct: float = Field(default=20.0, gt=0, le=100)
     take_profit_close_pct: float = Field(default=33.0, gt=0, le=100)
+    tp_width_pct: float = Field(default=100.0, gt=0, le=500)  # TP reach vs liq distance
     max_dca_orders: int = Field(default=8, ge=1, le=30)
 
 

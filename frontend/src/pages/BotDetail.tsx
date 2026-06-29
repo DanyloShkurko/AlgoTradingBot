@@ -38,6 +38,7 @@ export default function BotDetail() {
     [t('strategy.dcaAdd'), `${bot.dca_add_pct}%`],
     [t('strategy.maxDcaOrders'), `${bot.max_dca_orders}`],
     [t('strategy.closePerLevel'), `${bot.take_profit_close_pct}%`],
+    [t('strategy.tpWidth'), `${bot.tp_width_pct}%`],
     [t('bots.account'), bot.account_name],
   ]
 

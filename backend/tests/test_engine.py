@@ -181,6 +181,18 @@ def test_take_profit_quantity_sweeps_full_position():
     assert all(o.reduce_only for o in tp)
 
 
+def test_tp_width_multiplier_widens_levels():
+    # entry 30000, liq 27000 → distance 3000. At 200% the top TP sits at
+    # entry + 2*3000 = 36000 (vs 33000 at 100%). mark below all so none dropped.
+    state = MarketState(balance=1000, mark_price=30100, position_size=0.03,
+                        avg_entry_price=30000, liquidation_price=27000)
+    tp = sorted(by_role(plan(state, cfg(tp_width_pct=200.0)), "take_profit"),
+                key=lambda o: o.price)
+    assert len(tp) == 3
+    assert round(tp[-1].price) == 36000     # 30000 + 200% * 3000
+    assert round(tp[0].price) == 32000      # 30000 + (1/3)*6000
+
+
 def test_take_profit_skips_levels_already_passed():
     # Price ran up past the first TP (31000): it must NOT be re-armed, or it
     # would sell at market every tick. Only levels above mark remain.

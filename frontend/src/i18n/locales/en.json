@@ -121,7 +121,9 @@
     "tpTrigger": "TP Fallback %",
     "tpTriggerSub": "% from entry, used only when liquidation price is unknown",
     "closePerLevel": "Close Per Level",
-    "closePerLevelSub": "% per level; also sets the number of levels (33% → 3)"
+    "closePerLevelSub": "% per level; also sets the number of levels (33% → 3)",
+    "tpWidth": "TP Width",
+    "tpWidthSub": "% of entry→liquidation distance (100% = current, higher = farther)"
   },
   "table": {
     "symbol": "Symbol",

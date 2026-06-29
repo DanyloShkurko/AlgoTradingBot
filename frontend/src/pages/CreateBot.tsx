@@ -20,6 +20,7 @@ const defaults: Omit<BotCreate, 'account_id'> = {
   dca_add_pct: 20,
   take_profit_pct: 20,
   take_profit_close_pct: 33,
+  tp_width_pct: 100,
   max_dca_orders: 8,
 }
 
@@ -169,6 +170,7 @@ export default function CreateBot() {
             {numField('max_dca_orders', t('strategy.maxDcaOrders'), undefined, { min: 1, max: 30 })}
             <p className="text-xs text-slate-500 leading-relaxed">{t('strategy.tpExplain')}</p>
             {numField('take_profit_close_pct', t('strategy.closePerLevel'), t('strategy.closePerLevelSub'), { min: 5, max: 100, step: 1 })}
+            {numField('tp_width_pct', t('strategy.tpWidth'), t('strategy.tpWidthSub'), { min: 10, max: 500, step: 5 })}
             {numField('take_profit_pct', t('strategy.tpTrigger'), t('strategy.tpTriggerSub'), { min: 1, max: 100, step: 1 })}
           </Section>
 

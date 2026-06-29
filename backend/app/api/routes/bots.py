@@ -17,7 +17,7 @@ router = APIRouter()
 _CONFIG_FIELDS = (
     "symbol", "direction", "entry_price", "leverage", "target_position_pct",
     "dca_step_pct", "dca_add_pct", "take_profit_pct", "take_profit_close_pct",
-    "max_dca_orders",
+    "tp_width_pct", "max_dca_orders",
 )
 
 

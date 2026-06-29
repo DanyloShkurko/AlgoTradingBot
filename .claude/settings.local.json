@@ -28,7 +28,8 @@
       "Bash(pkill -f \"uvicorn app.main\")",
       "Bash(.venv/bin/python -c \"from app.main import app; print\\('app imports OK'\\); print\\('routes:'\\); [print\\(' ', sorted\\(m\\)[0] if m else '?', r.path\\) for r in app.routes if getattr\\(r,'path',''\\).startswith\\('/api'\\) for m in [list\\(getattr\\(r,'methods',[]\\) or []\\)]]\")",
       "Bash(.venv/bin/python -c \"from app.main import app; from app.strategy.bot_runner import BotRunner; from binance import ThreadedWebsocketManager; print\\('imports OK, ThreadedWebsocketManager available'\\)\")",
-      "Bash(docker buildx *)"
+      "Bash(docker buildx *)",
+      "Bash(python3 -c ' *)"
     ]
   }
 }

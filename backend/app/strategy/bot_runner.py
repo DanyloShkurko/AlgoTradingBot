@@ -41,6 +41,7 @@ def config_from_bot(bot: Bot) -> StrategyConfig:
         dca_add_pct=bot.dca_add_pct,
         take_profit_pct=bot.take_profit_pct,
         take_profit_close_pct=bot.take_profit_close_pct,
+        tp_width_pct=bot.tp_width_pct,
         max_dca_orders=bot.max_dca_orders,
         enabled=bot.enabled,
     )

@@ -1,4 +1,4 @@
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
 
 from app.core.config import settings
@@ -25,3 +25,19 @@ def init_db() -> None:
     from app import models  # noqa: F401
 
     Base.metadata.create_all(bind=engine)
+    _run_additive_migrations()
+
+
+# Lightweight stopgap until Alembic: create_all() never ADDS columns to an
+# existing table, so new strategy params must be backfilled here. Each statement
+# is idempotent (ADD COLUMN IF NOT EXISTS), so it's safe to run every startup.
+_ADDITIVE_MIGRATIONS = (
+    "ALTER TABLE bots ADD COLUMN IF NOT EXISTS tp_width_pct "
+    "double precision NOT NULL DEFAULT 100",
+)
+
+
+def _run_additive_migrations() -> None:
+    with engine.begin() as conn:
+        for stmt in _ADDITIVE_MIGRATIONS:
+            conn.execute(text(stmt))

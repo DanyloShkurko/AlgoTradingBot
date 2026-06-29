@@ -40,6 +40,7 @@ class Bot(Base):
     dca_add_pct: Mapped[float] = mapped_column(Float, default=20.0)
     take_profit_pct: Mapped[float] = mapped_column(Float, default=20.0)
     take_profit_close_pct: Mapped[float] = mapped_column(Float, default=33.0)
+    tp_width_pct: Mapped[float] = mapped_column(Float, default=100.0)
     max_dca_orders: Mapped[int] = mapped_column(Integer, default=8)
 
     # Lifecycle

@@ -13,5 +13,6 @@ class StrategyConfig(BaseModel):
     dca_add_pct: float = 20.0
     take_profit_pct: float = 20.0
     take_profit_close_pct: float = 33.0
+    tp_width_pct: float = 100.0  # TP reach as % of entry→liquidation distance
     max_dca_orders: int = 8
     enabled: bool = False

@@ -215,7 +215,9 @@ def _take_profit_prices(
     # for SHORT.
     liq_valid = liq > 0 and ((liq < entry) if sign > 0 else (liq > entry))
     if liq_valid:
-        unit = abs(entry - liq)
+        # Mirror the entry→liquidation distance to the profit side, scaled by
+        # tp_width_pct (100% = exactly that distance, higher = wider/farther).
+        unit = abs(entry - liq) * (config.tp_width_pct / 100.0)
         return [entry + sign * (k / n_levels) * unit for k in range(1, n_levels + 1)]
     tp_pct = config.take_profit_pct / 100.0
     return [entry * (1 + sign * tp_pct * k) for k in range(1, n_levels + 1)]
