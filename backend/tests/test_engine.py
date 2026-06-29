@@ -117,9 +117,9 @@ def test_in_position_under_target_has_tp_no_rebalance():
 
 # -- re-accumulate: buy freed capital back at the average -----------------
 
-def test_reaccumulate_buys_back_at_average_below_target():
-    # In position, well below target (50 of 1500), price above average → re-buy
-    # a chunk at the average, recycling capital freed by take-profits.
+def test_reaccumulate_refills_up_to_target_at_average():
+    # In position, below target (100 of 1500), price above average → refill the
+    # position back UP TO target at the average; rest stays as grid.
     state = MarketState(balance=1000, mark_price=120, position_size=1.0,
                         avg_entry_price=100, liquidation_price=80)
     reacc = by_role(plan(state, cfg()), "reaccumulate")
@@ -127,12 +127,22 @@ def test_reaccumulate_buys_back_at_average_below_target():
     o = reacc[0]
     assert o.side == "BUY" and o.reduce_only is False
     assert o.price == 100                  # at the average, not the launch price
-    assert round(o.quantity, 6) == 3.0     # min(deficit 1400, base 300) / 100
+    assert round(o.quantity, 6) == 14.0    # (target 1500 − held 100) / 100
+    # filling it brings the position exactly to target
+    assert round(o.quantity * o.price + state.position_notional, 2) == 1500.0
 
 
 def test_no_reaccumulate_when_underwater():
     # Price below the average → let the DCA grid average down; don't re-buy.
     state = MarketState(balance=1000, mark_price=90, position_size=1.0,
+                        avg_entry_price=100, liquidation_price=80)
+    assert by_role(plan(state, cfg()), "reaccumulate") == []
+
+
+def test_no_reaccumulate_when_over_target():
+    # Position above target (1600 > 1500): already holds enough — don't add,
+    # let take-profits de-risk.
+    state = MarketState(balance=1000, mark_price=120, position_size=16.0,
                         avg_entry_price=100, liquidation_price=80)
     assert by_role(plan(state, cfg()), "reaccumulate") == []
 

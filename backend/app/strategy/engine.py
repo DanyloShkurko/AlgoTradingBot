@@ -168,18 +168,20 @@ def _plan_rebalance(
         )
         return
 
-    # Under target AND price on the profit side of our average (LONG: above,
-    # SHORT: below) → take-profits have sold a chunk into a pump. Re-buy a chunk
-    # back at the average so the freed capital is recycled: sell high → buy back
-    # at the average → repeat. Caps at one base chunk so it rebuilds gradually
-    # and never overshoots target.
+    # After take-profits sell into a pump, top the position back up to target
+    # at the average so the freed capital is recycled: sell high → refill to
+    # target at the average → repeat.
     on_profit_side = (
         state.mark_price > state.avg_entry_price if sign > 0
         else state.mark_price < state.avg_entry_price
     )
+    # The check: target is the capital we want held IN the position; the rest
+    # stays as grid. If the position already holds >= target, don't add — let
+    # take-profits de-risk (over-target excess is trimmed by the branch above).
+    # If it holds < target, refill UP TO target at the average; the remaining
+    # buying power stays in the grid (DCA ladder).
     if notional < target and on_profit_side:
-        base = target * (config.dca_add_pct / 100.0)
-        qty = min(target - notional, base) / state.avg_entry_price
+        qty = (target - notional) / state.avg_entry_price
         p.add(
             DesiredOrder(
                 role="reaccumulate",
@@ -191,7 +193,8 @@ def _plan_rebalance(
             )
         )
         p.note(
-            f"Re-accumulate {qty:.6f} at average {state.avg_entry_price:.2f}"
+            f"Re-accumulate {qty:.6f} to target at average "
+            f"{state.avg_entry_price:.2f}"
         )
 
 
