@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import logging
 import threading
+import time
 from datetime import datetime, timezone
 from typing import Any, Optional
 
@@ -56,8 +57,20 @@ class BotRunner:
         self._last_position: Optional[tuple[float, float]] = None
         self._prepared = False
         self._symbol: Optional[str] = None
+        self._started_at = None  # bot.started_at, for realized-PnL window
         self._twm = None  # ThreadedWebsocketManager
         self._ws_init_done = False
+        self._realized_at = 0.0  # monotonic time of last realized-PnL fetch
+        # Cache of the last Binance read, served to the API so the frontend
+        # never has to hit Binance itself (avoids -1003 rate-limit bans).
+        self._snapshot: dict[str, Any] = {
+            "balance": 0.0,
+            "position": None,
+            "open_orders": [],
+            "realized": 0.0,
+            "unrealized": 0.0,
+            "updated_at": None,
+        }
         self._status: dict[str, Any] = {
             "running": False,
             "last_tick_at": None,
@@ -106,6 +119,9 @@ class BotRunner:
     def status(self) -> dict[str, Any]:
         return {**self._status, "running": self.is_running()}
 
+    def snapshot(self) -> dict[str, Any]:
+        return dict(self._snapshot)
+
     # -- loop -------------------------------------------------------------
 
     def _load(self) -> Optional[tuple[Bot, Account]]:
@@ -131,6 +147,7 @@ class BotRunner:
                     self._status["last_error"] = "Bot or account missing"
                     break
                 bot, account = loaded
+                self._started_at = bot.started_at
                 svc = binance_client.get_service_for_account(account)
                 config = config_from_bot(bot)
 
@@ -196,6 +213,7 @@ class BotRunner:
         symbol = config.symbol
         account = svc.get_account_summary()
         positions = svc.get_positions(symbol=symbol)
+        now_iso = datetime.now(timezone.utc).isoformat()
 
         opposite = "SHORT" if config.direction == "LONG" else "LONG"
         if any(p.side == opposite for p in positions):
@@ -203,6 +221,8 @@ class BotRunner:
                 f"{opposite} position open but bot is {config.direction}; "
                 "close it before trading this direction"
             ]
+            self._snapshot.update(balance=account.total_balance, position=None,
+                                  open_orders=[], unrealized=0.0, updated_at=now_iso)
             return
 
         pos = next((p for p in positions if p.side == config.direction), None)
@@ -220,10 +240,36 @@ class BotRunner:
         fill_detected = self._last_position is not None and current != self._last_position
         self._last_position = current
 
+        # Single orders fetch — reused for the snapshot and reconciliation.
+        raw_open = svc.get_raw_open_orders(symbol)
+        bot_open = [svc._to_order(o) for o in raw_open
+                    if str(o.get("clientOrderId", "")).startswith(self.prefix)]
+
+        # Realized PnL (trade history) is heavier — refresh only on a fill or
+        # at most once a minute.
+        monotonic = time.monotonic()
+        if fill_detected or (monotonic - self._realized_at) > 60:
+            try:
+                start_ms = (int(self._started_at.timestamp() * 1000)
+                            if self._started_at else None)
+                self._snapshot["realized"] = round(
+                    svc.get_realized_income(symbol, start_ms), 2)
+            except Exception:  # noqa: BLE001
+                pass
+            self._realized_at = monotonic
+
+        self._snapshot.update(
+            balance=account.total_balance,
+            position=pos,
+            open_orders=bot_open,
+            unrealized=round(pos.unrealized_pnl, 2) if pos else 0.0,
+            updated_at=now_iso,
+        )
+
         result = engine.plan(state, config)
         self._status["notes"] = result.notes
         self._status["desired_orders"] = len(result.orders)
-        self._reconcile(symbol, config, svc, result.orders, fill_detected)
+        self._reconcile(symbol, config, svc, result.orders, fill_detected, raw_open)
 
     # -- reconciliation ---------------------------------------------------
 
@@ -231,8 +277,8 @@ class BotRunner:
         # "ab-dca-1" -> "b{id}-dca-1"
         return self.prefix + engine_id[3:]
 
-    def _reconcile(self, symbol, config, svc, desired: list[DesiredOrder], fill_detected):
-        raw_open = svc.get_raw_open_orders(symbol)
+    def _reconcile(self, symbol, config, svc, desired: list[DesiredOrder],
+                   fill_detected, raw_open):
         bot_orders = {
             o["clientOrderId"]: o
             for o in raw_open
@@ -251,7 +297,8 @@ class BotRunner:
                 drift = abs(existing_price - d.price) / max(existing_price, 1e-9)
                 side_changed = existing.get("side") != d.side
                 force = side_changed or (
-                    fill_detected and d.role in ("take_profit", "rebalance")
+                    fill_detected
+                    and d.role in ("take_profit", "rebalance", "reaccumulate")
                 )
                 if drift <= price_tol and not force:
                     continue

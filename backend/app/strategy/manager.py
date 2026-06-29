@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import threading
-from typing import Any
+from typing import Any, Optional
 
 from app.core.db import SessionLocal
 from app.models import Bot
@@ -55,6 +55,11 @@ class BotManager:
         with self._lock:
             runner = self._runners.get(bot_id)
         return runner.status() if runner else dict(_IDLE_STATUS)
+
+    def snapshot(self, bot_id: int) -> Optional[dict[str, Any]]:
+        with self._lock:
+            runner = self._runners.get(bot_id)
+        return runner.snapshot() if runner else None
 
     def resume_enabled(self) -> None:
         db = SessionLocal()

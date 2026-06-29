@@ -146,25 +146,53 @@ def _plan_rebalance(
     target: float,
     growth: float,
 ) -> None:
-    _, _, close_side = _direction(config)
-    # Only trim once the position exceeds target by a full averaging step.
-    if state.position_notional <= target * growth:
-        return
-    excess_qty = (state.position_notional - target) / state.avg_entry_price
-    p.add(
-        DesiredOrder(
-            role="rebalance",
-            side=close_side,
-            price=state.avg_entry_price,
-            quantity=excess_qty,
-            reduce_only=True,
-            client_order_id="ab-rebal",
+    sign, open_side, close_side = _direction(config)
+    notional = state.position_notional
+
+    # Over target by a full averaging step → trim back to target (reduce-only).
+    if notional > target * growth:
+        excess_qty = (notional - target) / state.avg_entry_price
+        p.add(
+            DesiredOrder(
+                role="rebalance",
+                side=close_side,
+                price=state.avg_entry_price,
+                quantity=excess_qty,
+                reduce_only=True,
+                client_order_id="ab-rebal",
+            )
         )
+        p.note(
+            f"Rebalance: trim {excess_qty:.6f} at break-even "
+            f"{state.avg_entry_price:.2f}"
+        )
+        return
+
+    # Under target AND price on the profit side of our average (LONG: above,
+    # SHORT: below) → take-profits have sold a chunk into a pump. Re-buy a chunk
+    # back at the average so the freed capital is recycled: sell high → buy back
+    # at the average → repeat. Caps at one base chunk so it rebuilds gradually
+    # and never overshoots target.
+    on_profit_side = (
+        state.mark_price > state.avg_entry_price if sign > 0
+        else state.mark_price < state.avg_entry_price
     )
-    p.note(
-        f"Rebalance: trim {excess_qty:.6f} at break-even "
-        f"{state.avg_entry_price:.2f}"
-    )
+    if notional < target and on_profit_side:
+        base = target * (config.dca_add_pct / 100.0)
+        qty = min(target - notional, base) / state.avg_entry_price
+        p.add(
+            DesiredOrder(
+                role="reaccumulate",
+                side=open_side,
+                price=state.avg_entry_price,
+                quantity=qty,
+                reduce_only=False,
+                client_order_id="ab-reacc",
+            )
+        )
+        p.note(
+            f"Re-accumulate {qty:.6f} at average {state.avg_entry_price:.2f}"
+        )
 
 
 def _take_profit_prices(

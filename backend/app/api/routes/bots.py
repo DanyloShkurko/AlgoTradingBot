@@ -10,7 +10,6 @@ from app.models import Account, Bot, User
 from app.schemas.bot import BotCreate, BotOut, BotPnl, BotRuntime, BotUpdate
 from app.schemas.order import Order
 from app.schemas.position import Position
-from app.services import binance_client
 from app.strategy.manager import bot_manager
 
 router = APIRouter()
@@ -29,33 +28,15 @@ def _owned_bot(bot_id: int, user: User, db: Session) -> Bot:
     return bot
 
 
-def _compute_pnl(bot: Bot, account: Account) -> BotPnl:
+def _pnl_from_snapshot(bot: Bot, snap: Optional[dict]) -> BotPnl:
     since = bot.started_at.isoformat() if bot.started_at else None
-    try:
-        svc = binance_client.get_service_for_account(account)
-    except Exception:  # noqa: BLE001
+    if not snap:
         return BotPnl(since=since)
-
-    # Realized and unrealized are fetched independently so a failure in one
-    # (e.g. the income history call) doesn't zero out the other.
-    realized = 0.0
-    try:
-        start_ms = int(bot.started_at.timestamp() * 1000) if bot.started_at else None
-        realized = svc.get_realized_income(bot.symbol, start_ms)
-    except Exception:  # noqa: BLE001
-        pass
-
-    unreal = 0.0
-    try:
-        positions = svc.get_positions(symbol=bot.symbol)
-        pos = next((p for p in positions if p.side == bot.direction), None)
-        unreal = pos.unrealized_pnl if pos else 0.0
-    except Exception:  # noqa: BLE001
-        pass
-
+    realized = snap.get("realized", 0.0)
+    unreal = snap.get("unrealized", 0.0)
     return BotPnl(
-        realized=round(realized, 2),
-        unrealized=round(unreal, 2),
+        realized=realized,
+        unrealized=unreal,
         total=round(realized + unreal, 2),
         since=since,
     )
@@ -63,6 +44,7 @@ def _compute_pnl(bot: Bot, account: Account) -> BotPnl:
 
 def _to_out(bot: Bot, db: Session) -> BotOut:
     account = db.get(Account, bot.account_id)
+    snap = bot_manager.snapshot(bot.id)
     return BotOut(
         id=bot.id,
         name=bot.name,
@@ -72,7 +54,7 @@ def _to_out(bot: Bot, db: Session) -> BotOut:
         created_at=bot.created_at,
         started_at=bot.started_at,
         runtime=BotRuntime(**bot_manager.status(bot.id)),
-        pnl=_compute_pnl(bot, account) if account else BotPnl(),
+        pnl=_pnl_from_snapshot(bot, snap),
         **{f: getattr(bot, f) for f in _CONFIG_FIELDS},
     )
 
@@ -170,22 +152,13 @@ def stop_bot(bot_id: int, user: User = Depends(get_current_user), db: Session = 
 
 @router.get("/{bot_id}/orders", response_model=List[Order])
 def bot_orders(bot_id: int, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    bot = _owned_bot(bot_id, user, db)
-    account = db.get(Account, bot.account_id)
-    svc = binance_client.get_service_for_account(account)
-    try:
-        return svc.get_open_orders_with_prefix(bot.symbol, f"b{bot.id}-")
-    except Exception as exc:  # noqa: BLE001
-        raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(exc))
+    _owned_bot(bot_id, user, db)
+    snap = bot_manager.snapshot(bot_id)
+    return snap["open_orders"] if snap else []
 
 
 @router.get("/{bot_id}/position", response_model=Optional[Position])
 def bot_position(bot_id: int, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    bot = _owned_bot(bot_id, user, db)
-    account = db.get(Account, bot.account_id)
-    svc = binance_client.get_service_for_account(account)
-    try:
-        positions = svc.get_positions(symbol=bot.symbol)
-        return next((p for p in positions if p.side == bot.direction), None)
-    except Exception as exc:  # noqa: BLE001
-        raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(exc))
+    _owned_bot(bot_id, user, db)
+    snap = bot_manager.snapshot(bot_id)
+    return snap["position"] if snap else None

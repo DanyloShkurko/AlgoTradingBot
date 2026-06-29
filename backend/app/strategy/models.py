@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Literal
 
-Role = Literal["entry", "dca", "rebalance", "take_profit"]
+Role = Literal["entry", "dca", "rebalance", "reaccumulate", "take_profit"]
 Side = Literal["BUY", "SELL"]
 
 

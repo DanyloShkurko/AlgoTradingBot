@@ -95,7 +95,8 @@
     "position": "Position",
     "orders": "Open Orders",
     "noPosition": "No open position",
-    "runtime": "Runtime"
+    "runtime": "Status",
+    "planned": "Planned orders"
   },
   "strategy": {
     "symbol": "Symbol",

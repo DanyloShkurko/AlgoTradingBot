@@ -115,6 +115,43 @@ def test_in_position_under_target_has_tp_no_rebalance():
     assert "rebalance" not in roles(p)
 
 
+# -- re-accumulate: buy freed capital back at the average -----------------
+
+def test_reaccumulate_buys_back_at_average_below_target():
+    # In position, well below target (50 of 1500), price above average → re-buy
+    # a chunk at the average, recycling capital freed by take-profits.
+    state = MarketState(balance=1000, mark_price=120, position_size=1.0,
+                        avg_entry_price=100, liquidation_price=80)
+    reacc = by_role(plan(state, cfg()), "reaccumulate")
+    assert len(reacc) == 1
+    o = reacc[0]
+    assert o.side == "BUY" and o.reduce_only is False
+    assert o.price == 100                  # at the average, not the launch price
+    assert round(o.quantity, 6) == 3.0     # min(deficit 1400, base 300) / 100
+
+
+def test_no_reaccumulate_when_underwater():
+    # Price below the average → let the DCA grid average down; don't re-buy.
+    state = MarketState(balance=1000, mark_price=90, position_size=1.0,
+                        avg_entry_price=100, liquidation_price=80)
+    assert by_role(plan(state, cfg()), "reaccumulate") == []
+
+
+def test_no_reaccumulate_at_target():
+    # Already at target → nothing to rebuild.
+    state = MarketState(balance=1000, mark_price=120, position_size=15.0,
+                        avg_entry_price=100, liquidation_price=80)
+    assert by_role(plan(state, cfg()), "reaccumulate") == []
+
+
+def test_reaccumulate_short_sells_back_at_average():
+    state = MarketState(balance=1000, mark_price=80, position_size=1.0,
+                        avg_entry_price=100, liquidation_price=120)
+    reacc = by_role(plan(state, cfg(direction="SHORT")), "reaccumulate")
+    assert len(reacc) == 1
+    assert reacc[0].side == "SELL" and reacc[0].price == 100
+
+
 def test_take_profit_prices_above_entry_and_reduce_only():
     state = MarketState(balance=1000, mark_price=31000,
                         position_size=0.01, avg_entry_price=30000)

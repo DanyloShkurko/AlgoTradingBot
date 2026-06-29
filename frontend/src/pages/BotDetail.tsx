@@ -1,7 +1,7 @@
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Activity, AlertTriangle, ArrowLeft, CircleDot, Play, Square, Trash2 } from 'lucide-react'
+import { Activity, AlertTriangle, ArrowLeft, CircleDot, Info, Play, Square, Trash2 } from 'lucide-react'
 import { api } from '../api'
 import StatCard from '../components/StatCard'
 import Badge from '../components/Badge'
@@ -93,6 +93,19 @@ export default function BotDetail() {
           <AlertTriangle size={15} /> {bot.runtime.last_error}
         </div>
       )}
+
+      {!bot.runtime.last_error && bot.runtime.notes.length > 0 && (
+        <div className="flex items-start gap-2 text-sm text-slate-400 bg-slate-800/40 rounded-md px-3 py-2">
+          <Info size={15} className="mt-0.5 shrink-0" />
+          <span>{bot.runtime.notes.join(' · ')}</span>
+        </div>
+      )}
+
+      <div className="text-xs text-slate-500">
+        {t('botDetail.runtime')}: {bot.runtime.running ? t('bots.running') : t('bots.stopped')} ·{' '}
+        {t('bots.lastTick')}: {bot.runtime.last_tick_at ? new Date(bot.runtime.last_tick_at).toLocaleTimeString() : t('bots.never')} ·{' '}
+        {t('botDetail.planned')}: {bot.runtime.desired_orders}
+      </div>
 
       <div className="grid grid-cols-3 gap-4">
         <StatCard label={t('bots.realized')} value={`$${bot.pnl.realized.toFixed(2)}`} positive={bot.pnl.realized > 0} negative={bot.pnl.realized < 0} />
