@@ -111,6 +111,16 @@ def update_bot(
     db: Session = Depends(get_db),
 ):
     bot = _owned_bot(bot_id, user, db)
+    # Structural fields can't change under a running bot — it would orphan the
+    # live position/orders on the old symbol/side or fail the leverage change.
+    if bot_manager.is_running(bot_id):
+        locked = [f for f in ("symbol", "direction", "leverage")
+                  if getattr(body, f) != getattr(bot, f)]
+        if locked:
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                "Stop the bot before changing: " + ", ".join(locked),
+            )
     bot.name = body.name.strip() or bot.symbol
     for f in _CONFIG_FIELDS:
         setattr(bot, f, getattr(body, f))

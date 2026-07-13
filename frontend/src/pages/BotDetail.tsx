@@ -1,7 +1,7 @@
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Activity, AlertTriangle, ArrowLeft, CircleDot, Info, Play, Square, Trash2 } from 'lucide-react'
+import { Activity, AlertTriangle, ArrowLeft, CircleDot, Info, Pencil, Play, Square, Trash2 } from 'lucide-react'
 import { api } from '../api'
 import StatCard from '../components/StatCard'
 import Badge from '../components/Badge'
@@ -79,6 +79,12 @@ export default function BotDetail() {
               <Play size={13} /> {t('bots.start')}
             </button>
           )}
+          <Link
+            to={`/bots/${bot.id}/edit`}
+            className="flex items-center gap-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 text-sm px-3 py-1.5 rounded-md"
+          >
+            <Pencil size={13} /> {t('common.edit')}
+          </Link>
           <button
             onClick={() => confirm(t('bots.deleteConfirm')) && del.mutate()}
             className="text-slate-500 hover:text-red-400 px-2"

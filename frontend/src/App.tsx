@@ -6,6 +6,7 @@ import Login from './pages/Login'
 import Register from './pages/Register'
 import Bots from './pages/Bots'
 import CreateBot from './pages/CreateBot'
+import EditBot from './pages/EditBot'
 import BotDetail from './pages/BotDetail'
 import Accounts from './pages/Accounts'
 
@@ -35,6 +36,7 @@ export default function App() {
           <Route path="/" element={<Navigate to="/bots" replace />} />
           <Route path="/bots" element={<Bots />} />
           <Route path="/bots/new" element={<CreateBot />} />
+          <Route path="/bots/:id/edit" element={<EditBot />} />
           <Route path="/bots/:id" element={<BotDetail />} />
           <Route path="/accounts" element={<Accounts />} />
         </Route>

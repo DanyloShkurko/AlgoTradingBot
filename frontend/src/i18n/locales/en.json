@@ -12,6 +12,7 @@
     "delete": "Delete",
     "create": "Create",
     "creating": "Creating…",
+    "edit": "Edit",
     "none": "—",
     "yes": "Yes",
     "loading": "Loading…",
@@ -78,6 +79,11 @@
     "account": "Account",
     "details": "Details",
     "stopHint": "Stopping cancels the bot's orders"
+  },
+  "editBot": {
+    "title": "Edit bot",
+    "submit": "Save changes",
+    "runningWarn": "Bot is running. Symbol, direction and leverage can't change — stop it first. Other params apply on the next tick."
   },
   "createBot": {
     "title": "New bot",
