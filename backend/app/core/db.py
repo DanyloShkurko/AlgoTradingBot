@@ -34,6 +34,8 @@ def init_db() -> None:
 _ADDITIVE_MIGRATIONS = (
     "ALTER TABLE bots ADD COLUMN IF NOT EXISTS tp_width_pct "
     "double precision NOT NULL DEFAULT 100",
+    "ALTER TABLE bots ADD COLUMN IF NOT EXISTS scalp_chunks "
+    "text NOT NULL DEFAULT '[]'",
 )
 
 

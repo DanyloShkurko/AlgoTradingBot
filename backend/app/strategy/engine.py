@@ -28,6 +28,12 @@ from app.schemas.strategy import StrategyConfig
 from app.strategy.models import DesiredOrder, MarketState, StrategyPlan
 
 
+def price_key(price: float) -> str:
+    """Stable client-order-id fragment for a price (97.25 -> "97_25")."""
+    key = f"{price:.8f}".rstrip("0").rstrip(".")
+    return key.replace(".", "_")
+
+
 def _direction(config: StrategyConfig) -> tuple[int, str, str]:
     """Return (sign, open_side, close_side). sign +1 = LONG, -1 = SHORT."""
     if config.direction == "SHORT":
@@ -52,10 +58,11 @@ def plan(state: MarketState, config: StrategyConfig) -> StrategyPlan:
 
     in_position = state.position_size > 0 and state.avg_entry_price > 0
     if in_position:
-        # Position is open: spread the grid — averaging ladder + break-even +
-        # take-profit exits.
+        # Position is open: spread the grid — averaging ladder + excess unload
+        # + break-even + take-profit exits.
         _plan_dca_ladder(p, state, config, target, buying_power, growth, step)
-        _plan_rebalance(p, state, config, target, growth)
+        covered = _plan_scalp(p, state, config, target, step)
+        _plan_rebalance(p, state, config, target, growth, covered)
         _plan_take_profit(p, state, config, target)
     else:
         # Flat: place only the single entry order and wait for it to fill.
@@ -139,33 +146,100 @@ def _plan_dca_ladder(
         deployed += notional
 
 
+def _plan_scalp(
+    p: StrategyPlan,
+    state: MarketState,
+    config: StrategyConfig,
+    target: float,
+    step: float,
+) -> float:
+    """Unload what was bought beyond target: each chunk is offered one DCA
+    step above its own fill price (SHORT: below), so every round trip banks a
+    profit no matter where the position average sits. Chunks too small for the
+    exchange minimum are batched together, anchored on the batch's most
+    expensive buy so no member is sold below its own cost; a remainder still
+    below the minimum is left to the break-even trim. Returns the quantity
+    covered by the planned unload orders.
+    """
+    sign, _, close_side = _direction(config)
+    if not state.excess_chunks or state.avg_entry_price <= 0:
+        return 0.0
+    # Never unload more than the real excess over target: chunks are runner
+    # bookkeeping and can lag reality across restarts or missed fills.
+    available = max(0.0, (state.position_notional - target) / state.avg_entry_price)
+    if available <= 1e-12:
+        return 0.0
+
+    chunks = sorted(state.excess_chunks, key=lambda c: c[0], reverse=sign < 0)
+    covered = 0.0
+    batch: list[tuple[float, float]] = []
+    batch_notional = 0.0
+
+    def flush() -> None:
+        nonlocal covered, batch, batch_notional
+        if not batch:
+            return
+        prices = [pr for pr, _ in batch]
+        anchor = max(prices) if sign > 0 else min(prices)
+        qty = sum(q for _, q in batch)
+        p.add(
+            DesiredOrder(
+                role="scalp",
+                side=close_side,
+                price=anchor * (1 + sign * step),
+                quantity=qty,
+                reduce_only=True,
+                client_order_id=f"ab-scalp-{price_key(anchor)}",
+            )
+        )
+        covered += qty
+        batch, batch_notional = [], 0.0
+
+    for price, qty in chunks:
+        take = min(qty, available)
+        if take <= 1e-12:
+            break
+        available -= take
+        batch.append((price, take))
+        batch_notional += price * take
+        if state.min_order_notional <= 0 or batch_notional >= state.min_order_notional:
+            flush()
+    # Anything left in `batch` is below min notional — break-even trim covers it.
+    if covered:
+        p.note(f"Unloading {covered:.6f} bought beyond target")
+    return covered
+
+
 def _plan_rebalance(
     p: StrategyPlan,
     state: MarketState,
     config: StrategyConfig,
     target: float,
     growth: float,
+    covered: float = 0.0,
 ) -> None:
     sign, open_side, close_side = _direction(config)
     notional = state.position_notional
 
-    # Over target by a full averaging step → trim back to target (reduce-only).
+    # Over target by a full averaging step → trim back to target (reduce-only),
+    # minus whatever the scalp unload orders already cover.
     if notional > target * growth:
-        excess_qty = (notional - target) / state.avg_entry_price
-        p.add(
-            DesiredOrder(
-                role="rebalance",
-                side=close_side,
-                price=state.avg_entry_price,
-                quantity=excess_qty,
-                reduce_only=True,
-                client_order_id="ab-rebal",
+        excess_qty = (notional - target) / state.avg_entry_price - covered
+        if excess_qty > 1e-12:
+            p.add(
+                DesiredOrder(
+                    role="rebalance",
+                    side=close_side,
+                    price=state.avg_entry_price,
+                    quantity=excess_qty,
+                    reduce_only=True,
+                    client_order_id="ab-rebal",
+                )
             )
-        )
-        p.note(
-            f"Rebalance: trim {excess_qty:.6f} at break-even "
-            f"{state.avg_entry_price:.2f}"
-        )
+            p.note(
+                f"Rebalance: trim {excess_qty:.6f} at break-even "
+                f"{state.avg_entry_price:.2f}"
+            )
         return
 
     # After take-profits sell into a pump, top the position back up to target

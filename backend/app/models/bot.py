@@ -8,6 +8,7 @@ from sqlalchemy import (
     ForeignKey,
     Integer,
     String,
+    Text,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -42,6 +43,10 @@ class Bot(Base):
     take_profit_close_pct: Mapped[float] = mapped_column(Float, default=33.0)
     tp_width_pct: Mapped[float] = mapped_column(Float, default=100.0)
     max_dca_orders: Mapped[int] = mapped_column(Integer, default=8)
+
+    # Runner state: JSON list of [buy_price, qty] chunks bought beyond target,
+    # awaiting unload one step above their own buy price. Survives restarts.
+    scalp_chunks: Mapped[str] = mapped_column(Text, default="[]")
 
     # Lifecycle
     enabled: Mapped[bool] = mapped_column(Boolean, default=False)

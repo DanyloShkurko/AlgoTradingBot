@@ -200,6 +200,12 @@ class BinanceService:
     def cancel_order(self, symbol: str, order_id: str) -> dict[str, Any]:
         return self._client_().futures_cancel_order(symbol=symbol, orderId=int(order_id))
 
+    def get_order(self, symbol: str, orig_client_order_id: str) -> dict[str, Any]:
+        """Status of the most recent order with this client id (open or not)."""
+        return self._client_().futures_get_order(
+            symbol=symbol, origClientOrderId=orig_client_order_id
+        )
+
     # -- websockets -------------------------------------------------------
 
     def make_ws_manager(self):

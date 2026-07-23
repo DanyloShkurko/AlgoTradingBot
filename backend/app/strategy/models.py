@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Literal
 
-Role = Literal["entry", "dca", "rebalance", "reaccumulate", "take_profit"]
+Role = Literal["entry", "dca", "rebalance", "reaccumulate", "scalp", "take_profit"]
 Side = Literal["BUY", "SELL"]
 
 
@@ -16,6 +16,9 @@ class MarketState:
     avg_entry_price: float = 0.0    # average entry / break-even ("point zero")
     liquidation_price: float = 0.0  # exchange-reported liquidation (0 = unknown)
     min_order_notional: float = 0.0  # exchange min notional per order (0 = unknown)
+    # Chunks bought beyond target that should be unloaded near their own buy
+    # price: list of (buy_price, base_qty). Maintained by the runner.
+    excess_chunks: list[tuple[float, float]] = field(default_factory=list)
 
     @property
     def position_notional(self) -> float:

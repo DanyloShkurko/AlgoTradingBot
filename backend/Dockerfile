@@ -3,7 +3,11 @@ FROM python:3.11-slim
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
-    PIP_NO_CACHE_DIR=1
+    PIP_NO_CACHE_DIR=1 \
+    # Slow/flaky Raspberry Pi connections time out on the default 15s; give pip
+    # a long read timeout and plenty of retries so a hiccup doesn't fail the build.
+    PIP_DEFAULT_TIMEOUT=180 \
+    PIP_RETRIES=15
 
 WORKDIR /app
 

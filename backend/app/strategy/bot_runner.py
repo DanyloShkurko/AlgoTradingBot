@@ -8,6 +8,7 @@ orders.
 """
 from __future__ import annotations
 
+import json
 import logging
 import threading
 import time
@@ -28,6 +29,14 @@ log = logging.getLogger("strategy.bot_runner")
 # Heartbeat poll interval. The websocket wakes the loop instantly on fills;
 # this is the fallback that keeps state correct if the socket drops.
 _TICK_SECONDS = 5
+
+
+def _anchor_from_cid(cid: str) -> float:
+    """Buy price encoded in a scalp order id ("b3-scalp-97_25" -> 97.25)."""
+    try:
+        return float(cid.split("-scalp-", 1)[1].replace("_", "."))
+    except (IndexError, ValueError):
+        return 0.0
 
 
 def config_from_bot(bot: Bot) -> StrategyConfig:
@@ -62,6 +71,15 @@ class BotRunner:
         self._twm = None  # ThreadedWebsocketManager
         self._ws_init_done = False
         self._realized_at = 0.0  # monotonic time of last realized-PnL fetch
+        # Chunks bought beyond target awaiting unload: price_key -> [price, qty].
+        # Persisted to bots.scalp_chunks so they survive restarts.
+        self._chunks: dict[str, list[float]] = {}
+        self._chunks_loaded = False
+        self._chunks_dirty = False
+        self._ws_fills: list[dict[str, Any]] = []  # fill events from the ws thread
+        self._fills_lock = threading.Lock()
+        self._scalp_open: set[str] = set()  # scalp cids confirmed resting
+        self._scalp_done: dict[str, float] = {}  # ws-accounted fill qty per cid
         # Cache of the last Binance read, served to the API so the frontend
         # never has to hit Binance itself (avoids -1003 rate-limit bans).
         self._snapshot: dict[str, Any] = {
@@ -149,6 +167,8 @@ class BotRunner:
                     break
                 bot, account = loaded
                 self._started_at = bot.started_at
+                if not self._chunks_loaded:
+                    self._load_chunks(bot)
                 svc = binance_client.get_service_for_account(account)
                 config = config_from_bot(bot)
 
@@ -203,6 +223,16 @@ class BotRunner:
             if event == "ORDER_TRADE_UPDATE":
                 o = msg.get("o", {})
                 if o.get("s") == self._symbol and o.get("X") in ("FILLED", "PARTIALLY_FILLED"):
+                    cid = str(o.get("c", ""))
+                    if cid.startswith(self.prefix):
+                        with self._fills_lock:
+                            self._ws_fills.append({
+                                "cid": cid,
+                                "side": o.get("S"),
+                                "price": float(o.get("L") or o.get("ap") or 0),
+                                "qty": float(o.get("l") or 0),
+                                "status": o.get("X"),
+                            })
                     self.wake()
             elif event == "ACCOUNT_UPDATE":
                 if any(p.get("s") == self._symbol for p in msg.get("a", {}).get("P", [])):
@@ -246,6 +276,20 @@ class BotRunner:
         bot_open = [svc._to_order(o) for o in raw_open
                     if str(o.get("clientOrderId", "")).startswith(self.prefix)]
 
+        # Excess-chunk bookkeeping: catch scalp fills the ws may have missed,
+        # fold in new fills, drop stale state once the excess is gone.
+        target = engine.target_notional(state, config)
+        self._sync_scalp_rest(svc, symbol, raw_open)
+        self._process_fills(state, config, target)
+        if self._chunks and (state.position_size <= 0
+                             or state.position_notional <= target):
+            self._chunks.clear()
+            self._chunks_dirty = True
+        state.excess_chunks = [(p, q) for p, q in self._chunks.values()]
+        if self._chunks_dirty:
+            self._save_chunks()
+            self._chunks_dirty = False
+
         # Realized PnL (trade history) is heavier — refresh only on a fill or
         # at most once a minute.
         monotonic = time.monotonic()
@@ -272,6 +316,113 @@ class BotRunner:
         self._status["desired_orders"] = len(result.orders)
         self._reconcile(symbol, config, svc, result.orders, fill_detected, raw_open)
 
+    # -- excess-chunk bookkeeping (unload beyond-target buys) --------------
+
+    def _load_chunks(self, bot: Bot) -> None:
+        self._chunks_loaded = True
+        try:
+            data = json.loads(bot.scalp_chunks or "[]")
+        except (ValueError, TypeError):
+            data = []
+        self._chunks = {}
+        for item in data:
+            try:
+                price, qty = float(item[0]), float(item[1])
+            except (TypeError, ValueError, IndexError):
+                continue
+            if price > 0 and qty > 1e-12:
+                self._chunks[engine.price_key(price)] = [price, qty]
+
+    def _save_chunks(self) -> None:
+        db = SessionLocal()
+        try:
+            bot = db.get(Bot, self.bot_id)
+            if bot is not None:
+                bot.scalp_chunks = json.dumps(
+                    [[p, q] for p, q in self._chunks.values()]
+                )
+                db.commit()
+        except Exception:  # noqa: BLE001 - bookkeeping must not kill the tick
+            log.exception("bot %s failed to persist chunks", self.bot_id)
+        finally:
+            db.close()
+
+    def _add_chunk(self, price: float, qty: float) -> None:
+        if price <= 0 or qty <= 1e-12:
+            return
+        entry = self._chunks.setdefault(engine.price_key(price), [price, 0.0])
+        entry[1] += qty
+        self._chunks_dirty = True
+
+    def _consume_chunks(self, anchor: float, qty: float) -> None:
+        """An unload order (anchored at `anchor`) filled: remove that quantity
+        from the chunks nearest the anchor (its batch members)."""
+        remaining = qty
+        ordered = sorted(self._chunks.items(),
+                         key=lambda kv: abs(kv[1][0] - anchor))
+        for key, (_, have) in ordered:
+            if remaining <= 1e-12:
+                break
+            take = min(have, remaining)
+            remaining -= take
+            if have - take <= 1e-12:
+                del self._chunks[key]
+            else:
+                self._chunks[key][1] = have - take
+            self._chunks_dirty = True
+
+    def _process_fills(self, state: MarketState, config: StrategyConfig,
+                       target: float) -> None:
+        """Fold websocket fill events into the chunk ledger."""
+        with self._fills_lock:
+            fills, self._ws_fills = self._ws_fills, []
+        if not fills:
+            return
+        open_side = "SELL" if config.direction == "SHORT" else "BUY"
+
+        # Opening fills: the part of each fill that pushed the position beyond
+        # target becomes an unload chunk at that fill's price.
+        buys = [f for f in fills
+                if f["side"] == open_side and f["price"] > 0 and f["qty"] > 0]
+        running = state.position_notional - sum(f["price"] * f["qty"] for f in buys)
+        for f in buys:
+            after = running + f["price"] * f["qty"]
+            if after > target:
+                chunk_q = (f["qty"] if running >= target
+                           else (after - target) / f["price"])
+                self._add_chunk(f["price"], chunk_q)
+            running = after
+
+        # Unload fills: shrink the ledger by what was sold.
+        for f in fills:
+            if f["side"] != open_side and "-scalp-" in f["cid"]:
+                self._scalp_done[f["cid"]] = (
+                    self._scalp_done.get(f["cid"], 0.0) + f["qty"]
+                )
+                self._consume_chunks(_anchor_from_cid(f["cid"]), f["qty"])
+                if f["status"] == "FILLED":
+                    self._scalp_open.discard(f["cid"])
+                    self._scalp_done.pop(f["cid"], None)
+
+    def _sync_scalp_rest(self, svc, symbol: str, raw_open: list) -> None:
+        """REST fallback: a scalp order that was resting but is now gone either
+        filled or was cancelled — ask Binance which, so a fill the websocket
+        missed doesn't get re-placed and sell the position twice."""
+        open_cids = {str(o.get("clientOrderId", "")) for o in raw_open}
+        for cid in list(self._scalp_open):
+            if cid in open_cids:
+                continue
+            self._scalp_open.discard(cid)
+            try:
+                order = svc.get_order(symbol, cid)
+            except Exception:  # noqa: BLE001 - engine's excess cap bounds drift
+                self._scalp_done.pop(cid, None)
+                continue
+            done = float(order.get("executedQty", 0) or 0)
+            done -= self._scalp_done.pop(cid, 0.0)
+            if done > 1e-12:
+                self._consume_chunks(_anchor_from_cid(cid), done)
+
     # -- reconciliation ---------------------------------------------------
 
     def _cid(self, engine_id: str) -> str:
@@ -286,6 +437,9 @@ class BotRunner:
             if str(o.get("clientOrderId", "")).startswith(self.prefix)
         }
         self._status["open_orders"] = len(bot_orders)
+        for cid in bot_orders:
+            if "-scalp-" in cid:
+                self._scalp_open.add(cid)
 
         filters = svc.symbol_filters(symbol)
         desired_by_id = {self._cid(d.client_order_id): d for d in desired}
@@ -297,12 +451,18 @@ class BotRunner:
                 existing_price = float(existing["price"])
                 drift = abs(existing_price - d.price) / max(existing_price, 1e-9)
                 side_changed = existing.get("side") != d.side
-                force = side_changed or (
+                # Scalp orders sit at fixed prices, but their batch quantity
+                # can change as chunks come and go — recreate on qty drift.
+                qty_changed = d.role == "scalp" and abs(
+                    float(existing.get("origQty", 0) or 0) - d.quantity
+                ) > max(filters.min_qty, 0.01 * d.quantity)
+                force = side_changed or qty_changed or (
                     fill_detected
                     and d.role in ("take_profit", "rebalance", "reaccumulate")
                 )
                 if drift <= price_tol and not force:
                     continue
+                self._drop_scalp_tracking(cid)
                 self._safe_cancel(svc, symbol, existing["orderId"])
 
             if d.quantity < filters.min_qty:
@@ -313,7 +473,15 @@ class BotRunner:
 
         for cid, o in bot_orders.items():
             if cid not in desired_by_id:
+                self._drop_scalp_tracking(cid)
                 self._safe_cancel(svc, symbol, o["orderId"])
+
+    def _drop_scalp_tracking(self, cid: str) -> None:
+        # We cancel this order ourselves — don't let the REST fallback later
+        # mistake its absence for a fill.
+        if "-scalp-" in cid:
+            self._scalp_open.discard(cid)
+            self._scalp_done.pop(cid, None)
 
     def _cancel_all_bot_orders(self) -> int:
         loaded = self._load()

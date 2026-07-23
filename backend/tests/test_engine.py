@@ -115,6 +115,81 @@ def test_in_position_under_target_has_tp_no_rebalance():
     assert "rebalance" not in roles(p)
 
 
+# -- scalp: unload beyond-target buys a step above their own price --------
+
+def test_scalp_unloads_each_chunk_above_its_own_buy():
+    # Position 3000 vs target 1500; two chunks bought at 96 and 94 → each gets
+    # a reduce-only sell one DCA step (2%) above its own buy price.
+    state = MarketState(balance=1000, mark_price=95, position_size=30.0,
+                        avg_entry_price=100, liquidation_price=80,
+                        excess_chunks=[(96.0, 1.0), (94.0, 2.0)])
+    scalp = sorted(by_role(plan(state, cfg()), "scalp"), key=lambda o: o.price)
+    assert len(scalp) == 2
+    assert all(o.reduce_only and o.side == "SELL" for o in scalp)
+    assert round(scalp[0].price, 2) == round(94 * 1.02, 2)
+    assert round(scalp[1].price, 2) == round(96 * 1.02, 2)
+    assert scalp[0].quantity == 2.0 and scalp[1].quantity == 1.0
+
+
+def test_scalp_batches_small_chunks_to_min_notional():
+    # Each chunk is ~$94 but the exchange minimum is $200 → batch them into one
+    # order anchored at the priciest buy so no member sells below its cost.
+    state = MarketState(balance=1000, mark_price=95, position_size=30.0,
+                        avg_entry_price=100, liquidation_price=80,
+                        min_order_notional=200.0,
+                        excess_chunks=[(92.0, 1.0), (94.0, 1.0), (96.0, 1.0)])
+    scalp = by_role(plan(state, cfg()), "scalp")
+    assert len(scalp) == 1
+    o = scalp[0]
+    assert o.quantity == 3.0
+    assert round(o.price, 2) == round(96 * 1.02, 2)  # anchored to priciest buy
+    assert o.quantity * o.price >= 200
+
+
+def test_scalp_remainder_below_min_left_to_trim():
+    # A single chunk too small to sell on its own: no scalp order, the
+    # break-even trim still covers the full excess.
+    state = MarketState(balance=1000, mark_price=95, position_size=30.0,
+                        avg_entry_price=100, liquidation_price=80,
+                        min_order_notional=200.0,
+                        excess_chunks=[(94.0, 1.0)])
+    p = plan(state, cfg())
+    assert by_role(p, "scalp") == []
+    rebal = by_role(p, "rebalance")
+    assert len(rebal) == 1
+    assert round(rebal[0].quantity, 6) == 15.0  # (3000-1500)/100, untouched
+
+
+def test_trim_shrinks_by_scalp_coverage():
+    # Chunks cover 5 of the 15 excess → trim only the remaining 10.
+    state = MarketState(balance=1000, mark_price=95, position_size=30.0,
+                        avg_entry_price=100, liquidation_price=80,
+                        excess_chunks=[(94.0, 5.0)])
+    p = plan(state, cfg())
+    assert round(by_role(p, "scalp")[0].quantity, 6) == 5.0
+    assert round(by_role(p, "rebalance")[0].quantity, 6) == 10.0
+
+
+def test_scalp_capped_at_actual_excess():
+    # Ledger claims more than the real excess (stale after a restart) → only
+    # the actual excess over target is unloaded.
+    state = MarketState(balance=1000, mark_price=95, position_size=16.0,
+                        avg_entry_price=100, liquidation_price=80,
+                        excess_chunks=[(94.0, 5.0)])
+    scalp = by_role(plan(state, cfg()), "scalp")
+    assert round(sum(o.quantity for o in scalp), 6) == 1.0  # (1600-1500)/100
+
+
+def test_scalp_short_unloads_below_its_own_sell():
+    state = MarketState(balance=1000, mark_price=105, position_size=30.0,
+                        avg_entry_price=100, liquidation_price=120,
+                        excess_chunks=[(106.0, 1.0)])
+    scalp = by_role(plan(state, cfg(direction="SHORT")), "scalp")
+    assert len(scalp) == 1
+    assert scalp[0].side == "BUY" and scalp[0].reduce_only
+    assert round(scalp[0].price, 2) == round(106 * 0.98, 2)
+
+
 # -- re-accumulate: buy freed capital back at the average -----------------
 
 def test_reaccumulate_refills_up_to_target_at_average():
