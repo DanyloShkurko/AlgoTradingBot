@@ -314,7 +314,8 @@ class BotRunner:
         result = engine.plan(state, config)
         self._status["notes"] = result.notes
         self._status["desired_orders"] = len(result.orders)
-        self._reconcile(symbol, config, svc, result.orders, fill_detected, raw_open)
+        self._reconcile(symbol, config, svc, result.orders, fill_detected,
+                        raw_open, state.position_size)
 
     # -- excess-chunk bookkeeping (unload beyond-target buys) --------------
 
@@ -430,7 +431,7 @@ class BotRunner:
         return self.prefix + engine_id[3:]
 
     def _reconcile(self, symbol, config, svc, desired: list[DesiredOrder],
-                   fill_detected, raw_open):
+                   fill_detected, raw_open, position_size: float):
         bot_orders = {
             o["clientOrderId"]: o
             for o in raw_open
@@ -444,17 +445,31 @@ class BotRunner:
         filters = svc.symbol_filters(symbol)
         desired_by_id = {self._cid(d.client_order_id): d for d in desired}
         price_tol = config.dca_step_pct / 100.0 / 2.0
+        problems: list[str] = []
+
+        # Binance rejects a reduce-only order once the resting reduce-only
+        # total would exceed the position (and auto-cancels the farthest one
+        # when a fill shrinks the position under the total). Track the total
+        # so we never fire placements that are guaranteed to bounce.
+        close_side = "BUY" if config.direction == "SHORT" else "SELL"
+        reduce_total = sum(
+            float(o.get("origQty", 0) or 0)
+            for o in bot_orders.values()
+            if o.get("reduceOnly") and o.get("side") == close_side
+        )
 
         for cid, d in desired_by_id.items():
             existing = bot_orders.get(cid)
             if existing is not None:
+                existing_qty = float(existing.get("origQty", 0) or 0)
                 existing_price = float(existing["price"])
                 drift = abs(existing_price - d.price) / max(existing_price, 1e-9)
                 side_changed = existing.get("side") != d.side
-                # Scalp orders sit at fixed prices, but their batch quantity
-                # can change as chunks come and go — recreate on qty drift.
-                qty_changed = d.role == "scalp" and abs(
-                    float(existing.get("origQty", 0) or 0) - d.quantity
+                # Quantities go stale too (e.g. a fill lands during a restart
+                # and the ladder is left sized for the old position) — recreate
+                # reduce-only orders whose quantity no longer matches.
+                qty_changed = d.reduce_only and abs(
+                    existing_qty - d.quantity
                 ) > max(filters.min_qty, 0.01 * d.quantity)
                 force = side_changed or qty_changed or (
                     fill_detected
@@ -463,18 +478,33 @@ class BotRunner:
                 if drift <= price_tol and not force:
                     continue
                 self._drop_scalp_tracking(cid)
-                self._safe_cancel(svc, symbol, existing["orderId"])
+                if self._safe_cancel(svc, symbol, existing["orderId"]):
+                    if existing.get("reduceOnly") and existing.get("side") == close_side:
+                        reduce_total -= existing_qty
 
             if d.quantity < filters.min_qty:
                 continue
             if filters.min_notional and d.quantity * d.price < filters.min_notional:
                 continue
-            self._safe_place(svc, symbol, d, cid)
+            if d.reduce_only and reduce_total + d.quantity > position_size * 1.0001:
+                # Would exceed the position → Binance would reject it (-2022).
+                # Wait for the stale orders above to clear; retry next tick.
+                problems.append(f"{cid}: waiting for reduce-only room")
+                continue
+            error = self._safe_place(svc, symbol, d, cid)
+            if error is not None:
+                problems.append(f"{cid}: {error}")
+            elif d.reduce_only:
+                reduce_total += d.quantity
 
         for cid, o in bot_orders.items():
             if cid not in desired_by_id:
                 self._drop_scalp_tracking(cid)
                 self._safe_cancel(svc, symbol, o["orderId"])
+
+        if problems:
+            # Surface rejections on the bot page instead of burying them in logs.
+            self._status["notes"] = list(self._status["notes"] or []) + problems[:3]
 
     def _drop_scalp_tracking(self, cid: str) -> None:
         # We cancel this order ourselves — don't let the REST fallback later
@@ -497,17 +527,22 @@ class BotRunner:
                 count += 1
         return count
 
-    def _safe_place(self, svc, symbol, d: DesiredOrder, cid: str) -> None:
+    def _safe_place(self, svc, symbol, d: DesiredOrder, cid: str) -> Optional[str]:
+        """Place an order; return Binance's error message on rejection."""
         try:
             svc.place_limit_order(
                 symbol=symbol, side=d.side, quantity=d.quantity, price=d.price,
                 reduce_only=d.reduce_only, client_order_id=cid,
             )
+            return None
         except BinanceAPIException as exc:
             log.warning("bot %s place %s failed: %s", self.bot_id, cid, exc.message)
+            return exc.message
 
-    def _safe_cancel(self, svc, symbol, order_id: Any) -> None:
+    def _safe_cancel(self, svc, symbol, order_id: Any) -> bool:
         try:
             svc.cancel_order(symbol, str(order_id))
+            return True
         except BinanceAPIException as exc:
             log.warning("bot %s cancel %s failed: %s", self.bot_id, order_id, exc.message)
+            return False
